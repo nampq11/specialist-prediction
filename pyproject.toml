@@ -1,0 +1,26 @@
+[project]
+name = "specialist-prediction"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "nam pham", email = "contact.nampham.work@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "ipywidgets>=8.1.5",
+    "jupyterlab>=4.3.6",
+    "mlflow>=2.21.0",
+    "optuna>=4.2.1",
+    "pandas>=2.2.3",
+    "scikit-learn>=1.6.1",
+    "seaborn>=0.13.2",
+    "xgboost>=3.0.0",
+]
+
+[project.scripts]
+specialist-prediction = "specialist_prediction:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
