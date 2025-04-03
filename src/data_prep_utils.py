@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
-from tqdm.auto import tqdm
 from scipy.sparse import issparse
 from sklearn.pipeline import Pipeline
+from tqdm.auto import tqdm
+
 
 def chunk_transform(df: pd.DataFrame, pipeline: Pipeline, chunk_size=1000):
     """Transform a DataFrame using a sklearn pipeline in chunks to avoid memory issues.
