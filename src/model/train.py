@@ -24,8 +24,9 @@ def train(train_loader, valid_loader, model, criterion, optimizer, device, num_e
             attention_mask = attention_mask.to(device)
             input_ids = torch.squeeze(input_ids, 1)
 
+
             batch_output = model(input_ids, attention_mask)
-            batch_output = torch.squeeze(batch_output)
+            batch_output = torch.squeeze(batch_output, 1)
 
             loss = criterion(batch_output, batch_labels)
             train_loss.append(loss.item())
