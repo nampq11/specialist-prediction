@@ -21,20 +21,24 @@ def download_model(model_name, save_dir=None):
         save_dir = os.path.join(os.getcwd(), model_short_name)
     
     os.makedirs(save_dir, exist_ok=True)
-    
-    print(f"Downloading model {model_name} to {save_dir}...")
+    save_path = os.path.join(save_dir, model_name)
+    if os.path.exists(save_path):
+        print(f"Model already exists at {save_path}. Skipping download.")
+        return save_path
+        
+    print(f"Downloading model {model_name} to {save_path}...")
     
     model = AutoModel.from_pretrained(model_name)
-    model.save_pretrained(save_dir)
+    model.save_pretrained(save_path)
     
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        tokenizer.save_pretrained(save_dir)
+        tokenizer.save_pretrained(save_path)
         print("Tokenizer downloaded and saved.")
     except Exception as e:
         print(f"Could not download tokenizer: {e}")
     
-    print(f"Model downloaded successfully to {save_dir}")
+    print(f"Model downloaded successfully to {save_path}")
     return save_dir
 
 if __name__ == "__main__":    

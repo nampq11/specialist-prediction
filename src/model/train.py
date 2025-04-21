@@ -1,97 +1,130 @@
 import torch
-import numpy as np
-from tqdm import tqdm
-from sklearn.metrics import accuracy_score
+import torch.nn as nn
+from tqdm.notebook import tqdm
 
-import matplotlib.pyplot as plt
+def train(model, train_loader, val_loader, optimizer, criterion, device, num_epochs=5, patience=2, save_path="best_model.pt"):
+    model.to(device)
+    best_val_loss = float('inf')
+    patience_counter = 0
 
-def train(train_loader, valid_loader, model, criterion, optimizer, device, num_epochs, model_path):
-    best_loss = 1e8
-    train_losses = []
-    valid_losses = []
-    
-    for i in range(num_epochs):
-        print(f"Epoch {i+1} of {num_epochs}")
-        valid_loss, train_loss = [], []
+    for epoch in tqdm(range(num_epochs)):
         model.train()
+        running_loss = 0.0
+        correct_level1 = 0
+        correct_combined = 0
+        total = 0
 
-        for batch_labels, batch_data in tqdm(train_loader):
-            input_ids = batch_data['input_ids']
-            attention_mask = batch_data['attention_mask']
+        for batch in tqdm(train_loader, desc="Training..."):
+            reason_text_ids = batch['reason_text_ids'].to(device)
+            reason_text_mask = batch['reason_text_mask'].to(device)
+            user_info = batch.get('user_info', None)
 
-            batch_labels = batch_labels.to(device)
-            input_ids = input_ids.to(device)
-            attention_mask = attention_mask.to(device)
-            input_ids = torch.squeeze(input_ids, 1)
+            if user_info is not None:
+                user_info = user_info.to(device)
+            labels = batch['labels'].to(device)
 
-
-            batch_output = model(input_ids, attention_mask)
-            batch_output = torch.squeeze(batch_output, 1)
-
-            loss = criterion(batch_output, batch_labels)
-            train_loss.append(loss.item())
             optimizer.zero_grad()
+            level1_logits, level2_logits = model(
+                reason_text_ids,
+                reason_text_mask,
+                user_info
+            )
+
+            _, level1_preds = torch.max(level1_logits, dim=1)
+            correct_mask = (level1_preds == labels)
+            loss = criterion(level1_logits, labels)
+
+            if level2_logits is not None and (~correct_mask).any():
+                incorrect_indices = (~correct_mask).nonzero(as_tuple=True)[0]
+                level2_loss = criterion(level2_logits[incorrect_indices], labels[incorrect_indices])
+                loss += level2_loss
+
             loss.backward()
             optimizer.step()
-        
+
+            running_loss += loss.item()
+            correct_level1 += correct_mask.sum().item()
+
+            if level2_logits is not None:
+                _, level2_preds = torch.max(level2_logits, dim=1)
+                final_preds = torch.where(correct_mask, level1_preds, level2_preds)
+            else:
+                final_preds = level1_preds
+
+            correct_combined += (final_preds == labels).sum().item()
+            total += labels.size(0)
+
+        print(f"Epoch {epoch+1}/{num_epochs}:")
+        print(f"Train Loss: {running_loss / len(train_loader): .4f}")
+        print(f"Level 1 Accuracy: {100 * correct_level1 / total:.2f}")
+        print(f"Final Accuracy (with Level 2 fallback): {100 * correct_combined / total: .2f}%\n")
+
+        # validation
         model.eval()
-        for batch_labels, batch_data in tqdm(valid_loader):
-            input_ids = batch_data['input_ids']
-            attention_mask = batch_data['attention_mask']
+        val_loss = 0.0
+        correct_level1 = 0
+        correct_combined = 0
+        total = 0
+        with torch.no_grad():
+            for batch in tqdm(val_loader, desc='Validate...'):
+                reason_text_ids = batch['reason_text_ids'].to(device)
+                reason_text_mask = batch['reason_text_mask'].to(device)
+                user_info = batch.get('user_info', None)
+                if user_info is not None:
+                    user_info = user_info.to(device)
 
-            batch_labels = batch_labels.to(device)
-            input_ids = input_ids.to(device)
-            attention_mask = attention_mask.to(device)
-            input_ids = torch.squeeze(input_ids, 1)
+                    for p in model.hidden_layer2.parameters():
+                        p.requires_grad = True
+                    for p in model.level2_output.parameters():
+                        p.requires_grad = True
+                else:
+                    for p in model.hidden_layer2.parameters():
+                        p.requires_grad = False
+                    for p in model.level2_output.parameters():
+                        p.requires_grad = False
+                labels = batch['labels'].to(device)
 
-            batch_output = model(input_ids, attention_mask)
-            batch_output = torch.squeeze(batch_output)
+                level1_logits, level2_logits = model(
+                    reason_text_ids,
+                    reason_text_mask,
+                    user_info
+                )
 
-            loss = criterion(batch_output, batch_labels)
-            valid_loss.append(loss.item())
-            
-        t_loss = np.mean(train_loss)
-        v_loss = np.mean(valid_loss)
-        train_losses.append(t_loss)
-        valid_losses.append(v_loss)
+                _, level1_preds = torch.max(level1_logits, dim=1)
+                correct_mask = (level1_preds == labels)
+                loss = criterion(level1_logits, labels)
+                if level2_logits is not None and (~correct_mask).any():
+                    incorrect_indices = (~correct_mask).nonzero(as_tuple=True)[0]
+                    level2_loss = criterion(level2_logits[incorrect_indices], labels[incorrect_indices])
+                    loss += level2_loss
+
+                val_loss += loss.item()
+                correct_level1 += correct_mask.sum().item()
+
+                if level2_logits is not None:
+                    _, level2_preds = torch.max(level2_logits, dim=1)
+                    final_preds = torch.where(correct_mask, level1_preds, level2_preds)
+                else:
+                    final_preds = level1_preds
+
+                correct_combined += (final_preds == labels).sum().item()
+                total += labels.size(0)
         
-        print(f"Train loss: {t_loss}, Validation Loss: {v_loss}")
-        if v_loss < best_loss:
-            best_loss = v_loss
-            torch.save(model.state_dict(), model_path)
-        print(f"Best Validation Loss: {best_loss}")
-    return train_losses, valid_losses
+        avg_val_loss = val_loss / len(val_loader)
+        print(f"Validation loss: {avg_val_loss:.4f}")
+        print(f"Validation level 1 Accuracy: {100 * correct_level1 / total:.2f}%")
+        print(f"Validation Final Accuracy (with Level 2 fallback): {100 * correct_combined / total:.2f}%\n")
 
-def test(test_loader, model, criterion, device):
-    model.eval()
-    test_loss = []
-    test_acc = []
-    for batch_labels, batch_data in tqdm(test_loader):
-        input_ids = batch_data['input_ids']
-        attention_mask = batch_data['attention_mask']
-
-        batch_labels = batch_labels.to(device)
-        input_ids = input_ids.to(device)
-        attention_mask = attention_mask.to(device)
-        input_ids = torch.squeeze(input_ids, 1)
-
-        batch_output = model(input_ids, attention_mask)
-        batch_output = torch.squeeze(batch_output)
-
-        loss = criterion(batch_output, batch_labels)
-        test_loss.append(loss.item())
-        batch_preds = torch.argmax(batch_output, dim=1)
-
-        if torch.cuda.is_available():
-            batch_labels = batch_labels.cpu()
-            batch_preds = batch_preds.cpu()
-        
-        test_acc.append(accuracy_score(batch_labels.detach().numpy(),
-                                       batch_preds.detach().numpy(),))
-        
-    test_loss = np.mean(test_loss)
-    test_acc = np.mean(test_acc)
-    print(f"Test Loss: {test_loss}, Test Accuracy: {test_acc}")
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            patience_counter = 0
+            torch.save(model.state_dict(), save_path)
+            print("Model saved.")
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print("Early stopping triggered.")
+                break                
 
 
 def plot_learning_curve(train_losses, valid_losses, save_path=None):
