@@ -3,8 +3,6 @@ from transformers import AutoModel, AutoConfig
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-
 class MedicalSpecialistClassifer(nn.Module):
     def __init__(self, num_specialists: int, model_name: str = "BookingCare/gte-multilingual-base-v2.1", user_feature_dim=2, dropout=0.2, load_pretrained=True, trust_remote_code=False):
         super(MedicalSpecialistClassifer, self).__init__()
@@ -78,7 +76,8 @@ class MedicalSpecialistClassifer(nn.Module):
 
             if user_info is not None and level2_logits is not None:
                 for i, prob in enumerate(max_probs):
-                    max_prob, pred = torch.max(level2_logits[i], dim=0)
+                    level2_prob = F.softmax(level2_logits[i], dim=0)
+                    max_prob, pred = torch.max(level2_prob, dim=0)
                     final_preds[i] = pred
                     max_probs[i] = max_prob
                 

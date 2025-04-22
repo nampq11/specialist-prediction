@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from tqdm.notebook import tqdm
+import matplotlib.pyplot as plt
 
 def train(model, train_loader, val_loader, optimizer, criterion, device, num_epochs=5, patience=2, save_path="best_model.pt"):
     model.to(device)
@@ -126,6 +127,42 @@ def train(model, train_loader, val_loader, optimizer, criterion, device, num_epo
                 print("Early stopping triggered.")
                 break                
 
+def evaluate(model, test_loader, device):
+    model.to(device)
+    
+    model.eval()
+    correct_level1 = 0
+    correct_combined = 0
+    total = 0
+    with torch.no_grad():
+        for batch in tqdm(test_loader, desc='Evaluating...'):
+            reason_text_ids = batch['reason_text_ids'].to(device)
+            reason_text_mask = batch['reason_text_mask'].to(device)
+            user_info = batch.get('user_info', None)
+            if user_info is not None:
+                user_info = user_info.to(device)
+            labels = batch['labels'].to(device)
+
+            level1_logits, level2_logits = model(
+                reason_text_ids,
+                reason_text_mask,
+                user_info
+            )
+
+            _, level1_preds = torch.max(level1_logits, dim=1)
+            correct_mask = (level1_preds == labels)
+
+            if level2_logits is not None:
+                _, level2_preds = torch.max(level2_logits, dim=1)
+                final_preds = torch.where(correct_mask, level1_preds, level2_preds)
+            else:
+                final_preds = level1_preds
+
+            correct_level1 += correct_mask.sum().item()
+            correct_combined += (final_preds == labels).sum().item()
+            total += labels.size(0)
+    print(f"Test Level 1 Accuracy: {100 * correct_level1 / total:.2f}%")
+    print(f"Test Final Accuracy (with Level 2 fallback): {100 * correct_combined / total:.2f}%\n")
 
 def plot_learning_curve(train_losses, valid_losses, save_path=None):
     """
